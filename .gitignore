@@ -1,7 +1,72 @@
-*.pyc
-__pycache__
-*/__pycache__
-*egg-info
-*.pyc
-*/pycacheMiniconda3-latest-Linux-x86_64.sh
-Miniconda3-latest-Linux-x86_64.sh
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+
+# Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Models and Checkpoints
+*.mdl
+*.zip
+*.pt
+*.pth
+*.ckpt
+best_model/
+best_model_*/
+checkpoints_*/
+model_*/
+simopt_results/
+simopt_results_*/
+
+# Logs and Data
+*.log
+*.csv
+*.out
+*.json
+*.npz
+*.db
+logs/
+logs_*/
+optuna_logs/
+optuna_tensorboard/
+optuna_trials/
+imported_results/
+
+# Images and Plots
+*.png
+*.jpg
+*.jpeg
+*.svg
+
+# MyPy
+.mypy_cache/
+
+# VS Code
+.vscode/
+
+# Jupyter Notebooks
+.ipynb_checkpoints

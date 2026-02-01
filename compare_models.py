@@ -7,7 +7,7 @@ import time
 
 from env.custom_hopper import *
 from agent import Agent, Policy
-from agent_actor_critic import Agent as ActorCriticAgent, Policy as Value
+from agent_actor_critic import ActorCriticAgent, Policy as ActorPolicy, Value as CriticValue
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -26,9 +26,10 @@ def evaluate_model(model_path, env, device, episodes, render=True, method='basel
     action_space_dim = env.action_space.shape[-1]
 
     if method == 'actor_critic':
-        policy = Value(observation_space_dim, action_space_dim)
-        policy.load_state_dict(torch.load(model_path), strict=True)
-        agent = ActorCriticAgent(policy, device=device)
+        policy = ActorPolicy(observation_space_dim, action_space_dim)
+        policy.load_state_dict(torch.load(model_path, map_location=device), strict=True)
+        value = CriticValue(observation_space_dim) # Dummy value network for initialization
+        agent = ActorCriticAgent(policy, value, device=device)
     else:
         policy = Policy(observation_space_dim, action_space_dim)
         policy.load_state_dict(torch.load(model_path), strict=True)

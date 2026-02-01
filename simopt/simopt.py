@@ -14,7 +14,9 @@ class SimOpt:
                  param_ranges: Dict[str, Tuple[float, float]],
                  n_initial_points: int = 5,
                  n_iterations: int = 20,
-                 save_dir: str = "./simopt_results"):
+                 save_dir: str = "./simopt_results",
+                 checkpoint_interval: int = 5,
+                 resume_from_checkpoint: bool = False):
         """
         Initialize SimOpt optimizer.
         
@@ -23,13 +25,19 @@ class SimOpt:
             n_initial_points: Number of initial random points to sample
             n_iterations: Number of optimization iterations
             save_dir: Directory to save optimization results
+            checkpoint_interval: Save checkpoint every N trials (0 = no checkpoints)
+            resume_from_checkpoint: If True, load progress from existing checkpoint
         """
         self.param_ranges = param_ranges
         self.n_initial_points = n_initial_points
         self.n_iterations = n_iterations
         self.save_dir = save_dir
+        self.checkpoint_interval = checkpoint_interval
         
-        # Initialize optimization history
+        # Create save directory
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Initialize empty history
         self.history = {
             'iterations': [],
             'params': [],
@@ -38,8 +46,17 @@ class SimOpt:
             'best_params': None
         }
         
-        # Create save directory
-        os.makedirs(save_dir, exist_ok=True)
+        # Initialize or load optimization history
+        if resume_from_checkpoint:
+            print("🔄 Resuming from checkpoint...")
+            try:
+                self.load_progress()
+                if self.history['iterations']:
+                    print(f"✅ Loaded {len(self.history['iterations'])} completed trials")
+                    print(f"   Best reward so far: {self.history['best_reward']:.2f}")
+            except Exception as e:
+                print(f"⚠️ Could not load checkpoint: {e}")
+                print("Starting from scratch...")
         
         # Initialize Gaussian Process
         self.gp = GaussianProcessRegressor(
@@ -122,15 +139,22 @@ class SimOpt:
         Returns:
             Best parameters found
         """
-        # Initial random sampling
-        X = []  # Parameter vectors
-        y = []  # Rewards
-        
         print("Starting SimOpt optimization...")
         print(f"Initial parameter ranges: {self.param_ranges}")
         
-        # Initial random sampling
-        for i in range(self.n_initial_points):
+        # Reconstruct X, y from checkpoint if resuming
+        if len(self.history['iterations']) > 0:
+            print(f"🔄 Resuming from {len(self.history['iterations'])} completed trials")
+            X = [self._params_to_vector(p) for p in self.history['params']]
+            y = self.history['rewards'].copy()
+            completed_trials = len(self.history['iterations'])
+        else:
+            X = []
+            y = []
+            completed_trials = 0
+        
+        # Initial random sampling (skip already completed)
+        for i in range(completed_trials, self.n_initial_points):
             print(f"\nInitial sampling iteration {i+1}/{self.n_initial_points}")
             params = self._sample_random_params()
             print(f"Sampled parameters: {params}")
@@ -156,6 +180,11 @@ class SimOpt:
                 self.history['best_params'] = params
                 print(f"New best reward: {reward:.2f}")
                 print(f"New best parameters: {params}")
+            
+            # Save checkpoint every N trials
+            if self.checkpoint_interval > 0 and (i + 1) % self.checkpoint_interval == 0:
+                print(f"💾 Saving checkpoint at trial {i+1}")
+                self.save_progress()
         
         # Bayesian optimization loop
         X = np.array(X)
@@ -191,8 +220,12 @@ class SimOpt:
                 print(f"New best reward: {reward:.2f}")
                 print(f"New best parameters: {params}")
             
-            # Save progress
-            self.save_progress()
+            # Save checkpoint every N trials
+            trial_num = self.n_initial_points + i + 1
+            if self.checkpoint_interval > 0 and trial_num % self.checkpoint_interval == 0:
+                checkpoint_file = os.path.join(self.save_dir, f'checkpoint_trial_{trial_num}.json')
+                print(f"💾 Saving checkpoint at trial {trial_num} to {checkpoint_file}")
+                self.save_progress()
         
         return self.history['best_params']
     

@@ -3,7 +3,9 @@ import optuna
 import gym
 import numpy as np
 import argparse
+import sys
 import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import json
 import torch
 from stable_baselines3 import SAC
@@ -99,8 +101,8 @@ def parse_args():
                       help='Number of training timesteps per trial (default: 100000)')
     parser.add_argument('--env_type', type=str, choices=['source', 'target'], default='target',
                       help='Environment type to optimize for (default: target)')
-    parser.add_argument('--timeout', type=int, default=3600,
-                      help='Optimization timeout in seconds (default: 3600)')
+    parser.add_argument('--timeout', type=int, default=None,
+                      help='Optimization timeout in seconds (default: None/Unlimited)')
     parser.add_argument('--use_udr', action='store_true',
                       help='Enable Uniform Domain Randomization during optimization')
     parser.add_argument('--mass_variation', type=float, default=0.3,
@@ -141,20 +143,25 @@ def objective(trial, args):
             'foot': (1-args.mass_variation, 1+args.mass_variation)
         }
     
-    # Create environment based on type
-    if args.env_type == 'source':
-        train_env = gym.make('CustomHopper-source-v0',
+    # Function to create environment
+    def make_env():
+        if args.env_type == 'source':
+            return gym.make('CustomHopper-source-v0',
                            use_udr=args.use_udr,
                            mass_ranges=mass_ranges)
-        eval_env = gym.make('CustomHopper-source-v0',
-                          use_udr=args.use_udr,
-                          mass_ranges=mass_ranges)
-    else:  # target
-        train_env = gym.make('CustomHopper-target-v0')
-        eval_env = gym.make('CustomHopper-target-v0')
+        else:  # target
+            return gym.make('CustomHopper-target-v0')
+
+    # Create parallel training environments
+    # Use 16 processes for training to maximize CPU usage
+    n_envs = 16
+    from stable_baselines3.common.env_util import make_vec_env
+    from stable_baselines3.common.vec_env import SubprocVecEnv
+
+    train_env = make_vec_env(make_env, n_envs=n_envs, vec_env_cls=SubprocVecEnv)
     
-    train_env = DummyVecEnv([lambda: train_env])
-    eval_env = DummyVecEnv([lambda: eval_env])
+    # Single environment for evaluation
+    eval_env = DummyVecEnv([make_env])
     
     # Create directories for this trial
     trial_dir = f"./optuna_trials/trial_{trial.number}"
@@ -196,8 +203,8 @@ def objective(trial, args):
             )
             trained_steps += next_chunk
 
-            # Evaluate and report (50 episodes as in the description)
-            mean_reward = evaluate_model(model, eval_env, n_eval_episodes=50)
+            # Evaluate and report (Reduced to 5 episodes for speed)
+            mean_reward = evaluate_model(model, eval_env, n_eval_episodes=5)
             trial.report(mean_reward, step=trained_steps)
 
             # Simple improvement-based tracking (for analysis / logging)
@@ -208,8 +215,8 @@ def objective(trial, args):
             if trial.should_prune():
                 raise optuna.TrialPruned()
         
-        # Final evaluation (again 50 episodes for consistency)
-        mean_reward = evaluate_model(model, eval_env, n_eval_episodes=50)
+        # Final evaluation (again 5 episodes for consistency)
+        mean_reward = evaluate_model(model, eval_env, n_eval_episodes=5)
         
         # Save the final model for this trial
         final_model_path = os.path.join(trial_dir, f"final_model_trial_{trial.number}.zip")
@@ -218,7 +225,7 @@ def objective(trial, args):
         # Save trial parameters for reference
         trial_params = {
             'trial_number': trial.number,
-            'mean_reward': mean_reward,
+            'mean_reward': float(mean_reward),
             'learning_rate': learning_rate,
             'buffer_size': buffer_size,
             'batch_size': batch_size,
@@ -230,9 +237,15 @@ def objective(trial, args):
             json.dump(trial_params, f, indent=4)
         
         return mean_reward
+
+    except optuna.TrialPruned:
+        # Re-raise TrialPruned so Optuna knows it was pruned, not failed
+        raise
         
     except Exception as e:
         print(f"Trial {trial.number} failed: {e}")
+        import traceback
+        traceback.print_exc()
         return float('-inf')
     
     finally:
@@ -266,7 +279,14 @@ def main():
     os.makedirs("./optuna_tensorboard", exist_ok=True)
     
     # Create study with PPO-style pruner (adapted for SAC)
+    # Uses SQLite storage to persist results and allow resuming (checkpointing)
+    study_name = f"sac_optimization_{args.env_type}"
+    storage_url = f"sqlite:///{study_name}.db"
+    
     study = optuna.create_study(
+        study_name=study_name,
+        storage=storage_url,
+        load_if_exists=True,
         direction='maximize',
         sampler=optuna.samplers.TPESampler(seed=42),
         pruner=PPOStylePruner(
@@ -284,7 +304,10 @@ def main():
     print(f"Environment: {args.env_type}")
     print(f"Trials: {args.n_trials}")
     print(f"Episodes per trial: {args.optimization_episodes}")
-    print(f"Timeout: {args.timeout} seconds")
+    if args.timeout:
+        print(f"Timeout: {args.timeout} seconds")
+    else:
+        print(f"Timeout: Unlimited (runs until {args.n_trials} trials complete)")
     if args.use_udr:
         print(f"UDR enabled with mass variation: ±{args.mass_variation*100:.0f}%")
     print(f"Output file: {args.output_file}")
@@ -294,6 +317,7 @@ def main():
     print("  - Patience: 1 violation allowed")
     print("  - Warmup steps: 2 evaluations")
     print("  - Two-step decline check: enabled")
+    print(f"Storage: {storage_url} (Checkpointing enabled - can resume if stopped)")
     print("="*60)
     
     # Run optimization
@@ -325,11 +349,15 @@ def main():
     # Copy best model to a standard location
     best_trial_dir = f"./optuna_trials/trial_{study.best_trial.number}"
     best_model_path = os.path.join(best_trial_dir, f"final_model_trial_{study.best_trial.number}.zip")
+    best_model_standard = None
+    
     if os.path.exists(best_model_path):
         import shutil
         best_model_standard = f"./best_model_optuna_{args.env_type}.zip"
         shutil.copy2(best_model_path, best_model_standard)
         print(f"✅ Best model copied to: {best_model_standard}")
+    else:
+        print(f"⚠️ Warning: Best model file not found at {best_model_path}")
     
     # Print usage instructions
     print(f"\n📋 USAGE INSTRUCTIONS:")
@@ -345,7 +373,10 @@ def main():
     print(f"   python train_sb3.py --episodes 2000 --use_udr --load_best_params {args.output_file}")
     print(f"")
     print(f"4. Test the best model directly:")
-    print(f"   python test_sb3.py --episodes 50 --model_path {best_model_standard}")
+    if best_model_standard:
+        print(f"   python test_sb3.py --episodes 50 --model_path {best_model_standard}")
+    else:
+        print(f"   (No model file available to test)")
     
     # Print top 5 trials for reference
     print(f"\n🏆 TOP 5 TRIALS:")

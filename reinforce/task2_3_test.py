@@ -5,9 +5,12 @@ import torch
 import gym
 import numpy as np
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from env.custom_hopper import *
-from agent import Agent, Policy
-from agent_actor_critic import Agent as ActorCriticAgent, Policy as Value
+from reinforce.agent_reinforce import Agent, Policy
 
 
 def parse_args():
@@ -25,8 +28,8 @@ args = parse_args()
 
 
 def main():
-    env = gym.make('CustomHopper-source-v0')
-    # env = gym.make('CustomHopper-target-v0')
+    # env = gym.make('CustomHopper-source-v0')
+    env = gym.make('CustomHopper-target-v0')
 
     print('Action space:', env.action_space)
     print('State space:', env.observation_space)
@@ -36,9 +39,10 @@ def main():
     action_space_dim = env.action_space.shape[-1]
 
     if args.method == 'actor_critic':
-        policy = Value(observation_space_dim, action_space_dim)
-        policy.load_state_dict(torch.load(args.model), strict=True)
-        agent = ActorCriticAgent(policy, device=args.device)
+        policy = ActorPolicy(observation_space_dim, action_space_dim)
+        policy.load_state_dict(torch.load(args.model, map_location=args.device), strict=True)
+        value = CriticValue(observation_space_dim) # Dummy value network for initialization
+        agent = ActorCriticAgent(policy, value, device=args.device)
     else:
         policy = Policy(observation_space_dim, action_space_dim)
         policy.load_state_dict(torch.load(args.model), strict=True)

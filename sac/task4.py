@@ -10,8 +10,13 @@ import argparse
 import os
 import json
 import torch
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from stable_baselines3 import SAC
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import EvalCallback
 from env.custom_hopper import *
 
@@ -67,33 +72,46 @@ def main():
                 'foot': (1-args.mass_variation, 1+args.mass_variation)
             }
 
-        # Create the training environment with UDR if enabled
-        train_env = gym.make('CustomHopper-source-v0',
+        # Function to create environment
+        def make_env():
+            return gym.make('CustomHopper-source-v0',
                            use_udr=args.use_udr,
                            mass_ranges=mass_ranges)
-        train_env = DummyVecEnv([lambda: train_env])
 
-        # Create evaluation environment with same UDR settings
-        eval_env = gym.make('CustomHopper-source-v0',
-                          use_udr=args.use_udr,
-                          mass_ranges=mass_ranges)
-        eval_env = DummyVecEnv([lambda: eval_env])
+        # Create the training environment with 16 parallel processes
+        n_envs = 16
+        print(f"Creating {n_envs} parallel environments for training...")
+        train_env = make_vec_env(make_env, n_envs=n_envs, vec_env_cls=SubprocVecEnv)
+
+        # Create single evaluation environment
+        eval_env = DummyVecEnv([make_env])
 
         print('State space:', train_env.observation_space)  # state-space
         print('Action space:', train_env.action_space)  # action-space
-        print('Dynamics parameters:', train_env.envs[0].get_parameters())  # masses of each link of the Hopper
+        # Access parameters through env_method for SubprocVecEnv compatibility
+        try:
+            params = train_env.env_method('get_parameters')[0]
+            print('Dynamics parameters:', params)
+        except Exception:
+            print('Dynamics parameters: (Parallel env - see logs for details)')
         if args.use_udr:
             print('UDR enabled with mass variation: ±{:.0f}%'.format(args.mass_variation * 100))
 
-        # Create model directory with UDR indication
-        model_dir = "./best_model_udr" if args.use_udr else "./best_model"
+        # Create model directory with UDR indication and mass variation
+        if args.use_udr:
+            model_dir = f"./best_model_udr_{int(args.mass_variation*100)}"
+            log_dir = f"./logs_udr_{int(args.mass_variation*100)}/"
+        else:
+            model_dir = "./best_model"
+            log_dir = "./logs/"
         os.makedirs(model_dir, exist_ok=True)
+        os.makedirs(log_dir, exist_ok=True)
 
         # Create evaluation callback
         eval_callback = EvalCallback(
             eval_env,
             best_model_save_path=model_dir,
-            log_path="./logs/",
+            log_path=log_dir,
             eval_freq=10000,
             deterministic=True,
             render=False
@@ -158,7 +176,10 @@ def main():
         )
 
         # Save the final model with UDR indication
-        model_name = os.path.join(model_dir, "udr_model" if args.use_udr else "source_model")
+        if args.use_udr:
+            model_name = os.path.join(model_dir, f"udr_model_{int(args.mass_variation*100)}")
+        else:
+            model_name = os.path.join(model_dir, "source_model")
         print(f"Saving final model as {model_name}...")
         model.save(model_name)
         print("Final model saved successfully!")

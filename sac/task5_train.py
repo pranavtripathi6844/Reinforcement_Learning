@@ -8,8 +8,13 @@ import argparse
 import os
 import json
 import torch
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from stable_baselines3 import SAC
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import EvalCallback
 from env.custom_hopper import *
 
@@ -51,23 +56,42 @@ def main():
     if args.load_best_params:
         best_params = load_best_params(args.load_best_params)
     
-    # Create the training environment (using target environment)
-    train_env = gym.make('CustomHopper-target-v0')
-    train_env = DummyVecEnv([lambda: train_env])
+    # Function to create environment
+    def make_env():
+        return gym.make('CustomHopper-target-v0')
 
-    # Create evaluation environment (using target environment)
-    eval_env = gym.make('CustomHopper-target-v0')
-    eval_env = DummyVecEnv([lambda: eval_env])
+    # Create the training environment with 16 parallel processes
+    n_envs = 16
+    print(f"Creating {n_envs} parallel environments for training on target...")
+    train_env = make_vec_env(make_env, n_envs=n_envs, vec_env_cls=SubprocVecEnv)
+
+    # Create single evaluation environment
+    eval_env = DummyVecEnv([make_env])
 
     print('State space:', train_env.observation_space)
     print('Action space:', train_env.action_space)
-    print('Dynamics parameters:', train_env.envs[0].get_parameters())
+    # Access parameters through env_method for SubprocVecEnv compatibility
+    try:
+        params = train_env.env_method('get_parameters')[0]
+        print('Dynamics parameters:', params)
+    except Exception:
+        print('Dynamics parameters: (Parallel env - see logs for details)')
+
+    # Determine save directory based on whether we're using optimized params
+    if best_params:
+        save_dir = "./best_model_target_optuna"
+        log_dir = "./logs_target_optuna/"
+        model_name_suffix = "optuna"
+    else:
+        save_dir = "./best_model_target_default"
+        log_dir = "./logs_target_default/"
+        model_name_suffix = "default"
 
     # Create evaluation callback
     eval_callback = EvalCallback(
         eval_env,
-        best_model_save_path="./best_model_target",  # New directory for target model
-        log_path="./logs_target/",                   # New directory for target logs
+        best_model_save_path=save_dir,
+        log_path=log_dir,
         eval_freq=10000,
         deterministic=True,
         render=False
@@ -92,29 +116,29 @@ def main():
         print("Using optimized hyperparameters")
     else:
         # Use default parameters
-    model = SAC(
-        "MlpPolicy",
-        train_env,
-        learning_rate=args.learning_rate,
-        buffer_size=1000000,
-        learning_starts=1000,
-        batch_size=256,
-        tau=0.005,
-        gamma=0.99,
-        train_freq=1,
-        gradient_steps=1,
-        action_noise=None,
-        optimize_memory_usage=False,
-        ent_coef='auto',
-        target_update_interval=1,
-        target_entropy='auto',
-        use_sde=False,
-        sde_sample_freq=-1,
-        use_sde_at_warmup=False,
-        tensorboard_log="./logs_target/",
+        model = SAC(
+            "MlpPolicy",
+            train_env,
+            learning_rate=args.learning_rate,
+            buffer_size=1000000,
+            learning_starts=1000,
+            batch_size=256,
+            tau=0.005,
+            gamma=0.99,
+            train_freq=1,
+            gradient_steps=1,
+            action_noise=None,
+            optimize_memory_usage=False,
+            ent_coef='auto',
+            target_update_interval=1,
+            target_entropy='auto',
+            use_sde=False,
+            sde_sample_freq=-1,
+            use_sde_at_warmup=False,
+            tensorboard_log="./logs_target/",
             verbose=1,
             device=device
-    )
+        )
 
     # Calculate total timesteps
     max_steps_per_episode = 500
@@ -130,7 +154,7 @@ def main():
     )
 
     # Save the final model
-    model_name = "./best_model_target/target_model"
+    model_name = f"{save_dir}/target_model_{model_name_suffix}"
     print(f"Saving final model as {model_name}...")
     model.save(model_name)
     print("Final model saved successfully!")
