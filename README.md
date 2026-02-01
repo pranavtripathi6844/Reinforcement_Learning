@@ -17,6 +17,7 @@ Student: Pranav Tripathi
 
 ## SAC (Soft Actor-Critic)
 *   `sac/task4.py` to train and test SAC in the source env with default parameters
+*   `sac/task5_tuning.py` to tune SAC hyperparameters using **Optuna** (optimizes for Target environment performance)
 *   `sac/task5_train.py` to train and test SAC in Source -> Source, Source -> Target, Target -> Target with the hyperparameters found through tuning
 *   `sac/task_test.py` to test a saved SAC model
 
