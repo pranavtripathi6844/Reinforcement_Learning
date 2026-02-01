@@ -374,7 +374,7 @@ def main():
     print(f"")
     print(f"4. Test the best model directly:")
     if best_model_standard:
-        print(f"   python test_sb3.py --episodes 50 --model_path {best_model_standard}")
+        print(f"   python sac/task_test.py --episodes 50 --model {best_model_standard}")
     else:
         print(f"   (No model file available to test)")
     
