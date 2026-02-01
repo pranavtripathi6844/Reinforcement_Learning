@@ -16,7 +16,7 @@ Student: Pranav Tripathi
 *   `actor_critic/task2_3_test.py` to test the agent
 
 ## SAC (Soft Actor-Critic)
-*   `sac/task4.py` to train and test SAB in the source env with default parameters
+*   `sac/task4.py` to train and test SAC in the source env with default parameters
 *   `sac/task5_train.py` to train and test SAC in Source -> Source, Source -> Target, Target -> Target with the hyperparameters found through tuning
 *   `sac/task_test.py` to test a saved SAC model
 
